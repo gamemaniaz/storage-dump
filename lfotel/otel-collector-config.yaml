@@ -1,0 +1,34 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Claude Code emits token counts as bare attributes; Langfuse reads gen_ai.usage.*.
+  transform:
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["gen_ai.usage.input_tokens"], attributes["input_tokens"]) where attributes["input_tokens"] != nil
+          - set(attributes["gen_ai.usage.output_tokens"], attributes["output_tokens"]) where attributes["output_tokens"] != nil
+          - set(attributes["gen_ai.usage.cache_read_input_tokens"], attributes["cache_read_tokens"]) where attributes["cache_read_tokens"] != nil
+          - set(attributes["gen_ai.usage.cache_creation_input_tokens"], attributes["cache_creation_tokens"]) where attributes["cache_creation_tokens"] != nil
+          # Per-session tag from OTEL_RESOURCE_ATTRIBUTES="session.tag=a%2Cb" (comma-separated for several).
+          - set(attributes["langfuse.trace.tags"], resource.attributes["session.tag"]) where resource.attributes["session.tag"] != nil
+          # Group traces into Langfuse Sessions by Claude Code's session id.
+          - set(attributes["langfuse.session.id"], attributes["session.id"]) where attributes["session.id"] != nil
+
+exporters:
+  otlp_http/langfuse:
+    traces_endpoint: http://langfuse-web:3000/api/public/otel/v1/traces
+    headers:
+      Authorization: "Basic ${env:LANGFUSE_AUTH_STRING}"
+      x-langfuse-ingestion-version: "4"
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform]
+      exporters: [otlp_http/langfuse]
